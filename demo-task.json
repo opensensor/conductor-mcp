@@ -1,0 +1,14 @@
+{
+  "name": "demo_task_1",
+  "description": "Demo task 1 for testing",
+  "retryCount": 3,
+  "timeoutSeconds": 300,
+  "inputKeys": ["input_value"],
+  "outputKeys": ["result"],
+  "timeoutPolicy": "TIME_OUT_WF",
+  "retryLogic": "FIXED",
+  "retryDelaySeconds": 60,
+  "responseTimeoutSeconds": 180,
+  "ownerEmail": "test@example.com"
+}
+

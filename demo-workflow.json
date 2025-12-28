@@ -1,0 +1,32 @@
+{
+  "name": "demo_workflow",
+  "description": "Demo workflow for testing conductor-mcp",
+  "version": 1,
+  "tasks": [
+    {
+      "name": "demo_task_1",
+      "taskReferenceName": "demo_task_1_ref",
+      "inputParameters": {
+        "input_value": "${workflow.input.value}"
+      },
+      "type": "SIMPLE"
+    },
+    {
+      "name": "demo_task_2",
+      "taskReferenceName": "demo_task_2_ref",
+      "inputParameters": {
+        "previous_output": "${demo_task_1_ref.output}"
+      },
+      "type": "SIMPLE"
+    }
+  ],
+  "outputParameters": {
+    "final_result": "${demo_task_2_ref.output}"
+  },
+  "schemaVersion": 2,
+  "restartable": true,
+  "ownerEmail": "test@example.com",
+  "timeoutPolicy": "ALERT_ONLY",
+  "timeoutSeconds": 3600
+}
+

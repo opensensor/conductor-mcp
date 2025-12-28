@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { CallToolRequestSchema, ListToolsRequestSchema, } from "@modelcontextprotocol/sdk/types.js";
+import { CallToolRequestSchema, ListToolsRequestSchema, ListResourcesRequestSchema, ReadResourceRequestSchema, ListPromptsRequestSchema, GetPromptRequestSchema, } from "@modelcontextprotocol/sdk/types.js";
 import axios from "axios";
 // Get configuration from environment variables
 const config = {
@@ -16,6 +16,157 @@ const conductorClient = axios.create({
     },
     timeout: 30000,
 });
+// Helper function to format error messages with suggestions
+function formatError(error, toolName) {
+    if (axios.isAxiosError(error)) {
+        const axiosError = error;
+        const status = axiosError.response?.status || 500;
+        const message = axiosError.response?.data?.message || axiosError.message || "Unknown error";
+        let suggestion = "";
+        // Provide helpful suggestions based on error type
+        if (status === 404) {
+            suggestion = "\n\n💡 Suggestion: The resource was not found. Please verify the ID/name is correct.";
+        }
+        else if (status === 400) {
+            suggestion = "\n\n💡 Suggestion: Invalid request. Please check the input parameters.";
+        }
+        else if (status === 500) {
+            if (message.includes("Elasticsearch")) {
+                suggestion = "\n\n💡 Suggestion: Elasticsearch is not configured or unavailable. Try using list_workflows instead of search_workflows.";
+            }
+            else {
+                suggestion = "\n\n💡 Suggestion: Server error. The Conductor server may be experiencing issues.";
+            }
+        }
+        else if (status === 503) {
+            suggestion = "\n\n💡 Suggestion: Service unavailable. The Conductor server may be down or restarting.";
+        }
+        else if (axiosError.code === "ECONNREFUSED") {
+            suggestion = `\n\n💡 Suggestion: Cannot connect to Conductor server at ${config.baseUrl}. Please verify the server is running and the URL is correct.`;
+        }
+        else if (axiosError.code === "ETIMEDOUT") {
+            suggestion = "\n\n💡 Suggestion: Request timed out. The server may be slow or unresponsive.";
+        }
+        return `❌ Error executing ${toolName}: [${status}] ${message}${suggestion}`;
+    }
+    return `❌ Error executing ${toolName}: ${error.message || "Unknown error"}`;
+}
+// Helper function to validate workflow ID format
+function validateWorkflowId(workflowId) {
+    if (!workflowId || workflowId.trim() === "") {
+        return { valid: false, error: "Workflow ID cannot be empty" };
+    }
+    // Basic UUID validation (Conductor typically uses UUIDs)
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(workflowId)) {
+        return { valid: false, error: `Invalid workflow ID format. Expected UUID format, got: ${workflowId}` };
+    }
+    return { valid: true };
+}
+// Helper function to format timestamps
+function formatTimestamp(epochMs) {
+    if (!epochMs)
+        return "N/A";
+    const date = new Date(epochMs);
+    return date.toISOString();
+}
+// Helper function to summarize workflow status
+function summarizeWorkflow(workflow) {
+    const duration = workflow.endTime
+        ? workflow.endTime - workflow.startTime
+        : Date.now() - workflow.startTime;
+    const durationSec = Math.floor(duration / 1000);
+    return `📋 Workflow: ${workflow.workflowName || workflow.workflowType} (v${workflow.version || workflow.workflowVersion})
+🆔 ID: ${workflow.workflowId}
+📊 Status: ${workflow.status}
+⏱️  Started: ${formatTimestamp(workflow.startTime)}
+⏳ Duration: ${durationSec}s
+${workflow.status === "FAILED" ? `❌ Failed Tasks: ${workflow.failedTaskNames?.join(", ") || "N/A"}` : ""}`;
+}
+// Define available resources
+const resources = [
+    {
+        uri: "conductor://workflows/definitions",
+        name: "Workflow Definitions",
+        description: "List of all registered workflow definitions in Conductor",
+        mimeType: "application/json",
+    },
+    {
+        uri: "conductor://tasks/definitions",
+        name: "Task Definitions",
+        description: "List of all registered task definitions in Conductor",
+        mimeType: "application/json",
+    },
+    {
+        uri: "conductor://workflows/running",
+        name: "Running Workflows",
+        description: "List of currently running workflow executions",
+        mimeType: "application/json",
+    },
+    {
+        uri: "conductor://workflows/failed",
+        name: "Failed Workflows",
+        description: "List of recently failed workflow executions",
+        mimeType: "application/json",
+    },
+];
+// Define available prompts
+const prompts = [
+    {
+        name: "troubleshoot_workflow",
+        description: "Troubleshoot a failed or stuck workflow",
+        arguments: [
+            {
+                name: "workflowId",
+                description: "The workflow execution ID to troubleshoot",
+                required: true,
+            },
+        ],
+    },
+    {
+        name: "analyze_failures",
+        description: "Analyze recent workflow failures and identify patterns",
+        arguments: [
+            {
+                name: "workflowName",
+                description: "Optional: Filter by specific workflow name",
+                required: false,
+            },
+            {
+                name: "hours",
+                description: "Number of hours to look back (default: 24)",
+                required: false,
+            },
+        ],
+    },
+    {
+        name: "create_workflow",
+        description: "Guide to create a new workflow definition",
+        arguments: [
+            {
+                name: "workflowName",
+                description: "Name for the new workflow",
+                required: true,
+            },
+            {
+                name: "description",
+                description: "Description of what the workflow does",
+                required: true,
+            },
+        ],
+    },
+    {
+        name: "monitor_workflow",
+        description: "Monitor a running workflow execution",
+        arguments: [
+            {
+                name: "workflowId",
+                description: "The workflow execution ID to monitor",
+                required: true,
+            },
+        ],
+    },
+];
 // Define available tools
 const tools = [
     {
@@ -391,6 +542,8 @@ const server = new Server({
 }, {
     capabilities: {
         tools: {},
+        resources: {},
+        prompts: {},
     },
 });
 // Handle list tools request
@@ -398,6 +551,178 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
     return {
         tools,
     };
+});
+// Handle list resources request
+server.setRequestHandler(ListResourcesRequestSchema, async () => {
+    return {
+        resources,
+    };
+});
+// Handle read resource request
+server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+    const { uri } = request.params;
+    try {
+        switch (uri) {
+            case "conductor://workflows/definitions": {
+                const response = await conductorClient.get("/metadata/workflow");
+                return {
+                    contents: [
+                        {
+                            uri,
+                            mimeType: "application/json",
+                            text: JSON.stringify(response.data, null, 2),
+                        },
+                    ],
+                };
+            }
+            case "conductor://tasks/definitions": {
+                const response = await conductorClient.get("/metadata/taskdefs");
+                return {
+                    contents: [
+                        {
+                            uri,
+                            mimeType: "application/json",
+                            text: JSON.stringify(response.data, null, 2),
+                        },
+                    ],
+                };
+            }
+            case "conductor://workflows/running": {
+                const response = await conductorClient.get("/workflow/search", {
+                    params: { status: "RUNNING", start: 0, size: 100 },
+                });
+                return {
+                    contents: [
+                        {
+                            uri,
+                            mimeType: "application/json",
+                            text: JSON.stringify(response.data, null, 2),
+                        },
+                    ],
+                };
+            }
+            case "conductor://workflows/failed": {
+                const response = await conductorClient.get("/workflow/search", {
+                    params: { status: "FAILED", start: 0, size: 100 },
+                });
+                return {
+                    contents: [
+                        {
+                            uri,
+                            mimeType: "application/json",
+                            text: JSON.stringify(response.data, null, 2),
+                        },
+                    ],
+                };
+            }
+            default:
+                throw new Error(`Unknown resource: ${uri}`);
+        }
+    }
+    catch (error) {
+        throw new Error(formatError(error, `read resource ${uri}`));
+    }
+});
+// Handle list prompts request
+server.setRequestHandler(ListPromptsRequestSchema, async () => {
+    return {
+        prompts,
+    };
+});
+// Handle get prompt request
+server.setRequestHandler(GetPromptRequestSchema, async (request) => {
+    const { name, arguments: args = {} } = request.params;
+    switch (name) {
+        case "troubleshoot_workflow": {
+            const workflowId = args.workflowId;
+            return {
+                messages: [
+                    {
+                        role: "user",
+                        content: {
+                            type: "text",
+                            text: `I need help troubleshooting workflow ${workflowId}. Please:
+1. Get the current status of the workflow
+2. Identify any failed tasks
+3. Check the task logs for errors
+4. Suggest possible solutions based on the error messages
+5. Recommend next steps to resolve the issue`,
+                        },
+                    },
+                ],
+            };
+        }
+        case "analyze_failures": {
+            const workflowName = args.workflowName;
+            const hours = args.hours || 24;
+            const startTime = Date.now() - hours * 60 * 60 * 1000;
+            let query = `List all failed workflows in the last ${hours} hours`;
+            if (workflowName) {
+                query += ` for workflow type "${workflowName}"`;
+            }
+            query += `. Then analyze the failures to identify:
+1. Common error patterns
+2. Most frequently failing tasks
+3. Potential root causes
+4. Recommendations to prevent future failures`;
+            return {
+                messages: [
+                    {
+                        role: "user",
+                        content: {
+                            type: "text",
+                            text: query,
+                        },
+                    },
+                ],
+            };
+        }
+        case "create_workflow": {
+            const workflowName = args.workflowName;
+            const description = args.description;
+            return {
+                messages: [
+                    {
+                        role: "user",
+                        content: {
+                            type: "text",
+                            text: `I want to create a new workflow called "${workflowName}".
+Description: ${description}
+
+Please help me:
+1. Show me existing workflow definitions as examples
+2. Guide me through creating the workflow definition JSON
+3. Help me define the necessary tasks
+4. Create the task definitions if needed
+5. Register the workflow definition in Conductor`,
+                        },
+                    },
+                ],
+            };
+        }
+        case "monitor_workflow": {
+            const workflowId = args.workflowId;
+            return {
+                messages: [
+                    {
+                        role: "user",
+                        content: {
+                            type: "text",
+                            text: `Please monitor workflow ${workflowId} and provide:
+1. Current status and progress
+2. List of completed tasks
+3. Currently running tasks
+4. Pending tasks
+5. Any warnings or issues
+6. Estimated time to completion (if possible)`,
+                        },
+                    },
+                ],
+            };
+        }
+        default:
+            throw new Error(`Unknown prompt: ${name}`);
+    }
 });
 // Handle tool execution
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
@@ -431,20 +756,47 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             }
             case "get_workflow_status": {
                 const { workflowId, includeTaskDetails = true } = args;
+                // Validate workflow ID
+                const validation = validateWorkflowId(workflowId);
+                if (!validation.valid) {
+                    return {
+                        content: [
+                            {
+                                type: "text",
+                                text: `❌ Validation Error: ${validation.error}`,
+                            },
+                        ],
+                        isError: true,
+                    };
+                }
                 const url = `/workflow/${workflowId}`;
                 const params = includeTaskDetails ? { includeTasks: true } : {};
                 const response = await conductorClient.get(url, { params });
+                // Add summary for better readability
+                const summary = summarizeWorkflow(response.data);
                 return {
                     content: [
                         {
                             type: "text",
-                            text: JSON.stringify(response.data, null, 2),
+                            text: `${summary}\n\n📄 Full Details:\n${JSON.stringify(response.data, null, 2)}`,
                         },
                     ],
                 };
             }
             case "start_workflow": {
                 const { workflowName, version, input = {}, correlationId, priority = 0 } = args;
+                // Validate workflow name
+                if (!workflowName || workflowName.trim() === "") {
+                    return {
+                        content: [
+                            {
+                                type: "text",
+                                text: "❌ Validation Error: Workflow name is required",
+                            },
+                        ],
+                        isError: true,
+                    };
+                }
                 const requestBody = {
                     name: workflowName,
                     input,
@@ -459,7 +811,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                     content: [
                         {
                             type: "text",
-                            text: `Workflow started successfully. Workflow ID: ${response.data}`,
+                            text: `✅ Workflow started successfully!\n\n🆔 Workflow ID: ${response.data}\n📋 Workflow Name: ${workflowName}\n${version ? `📌 Version: ${version}\n` : ""}${correlationId ? `🔗 Correlation ID: ${correlationId}\n` : ""}\n💡 Tip: Use get_workflow_status with this ID to monitor progress.`,
                         },
                     ],
                 };
@@ -700,7 +1052,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                     content: [
                         {
                             type: "text",
-                            text: `Unknown tool: ${name}`,
+                            text: `❌ Unknown tool: ${name}\n\n💡 Suggestion: Use list_tools to see available tools.`,
                         },
                     ],
                     isError: true,
@@ -708,13 +1060,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
     }
     catch (error) {
-        const errorMessage = error.response?.data?.message || error.message || "Unknown error";
-        const statusCode = error.response?.status || 500;
         return {
             content: [
                 {
                     type: "text",
-                    text: `Error executing ${name}: [${statusCode}] ${errorMessage}`,
+                    text: formatError(error, name),
                 },
             ],
             isError: true,
