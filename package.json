@@ -1,0 +1,37 @@
+{
+  "name": "conductor-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for Netflix Conductor Workflow Engine - enables AI assistants to interact with Conductor workflows for troubleshooting, creation, and management",
+  "main": "build/index.js",
+  "type": "module",
+  "bin": {
+    "conductor-mcp": "build/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "prepare": "npm run build",
+    "watch": "tsc --watch",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "mcp",
+    "conductor",
+    "workflow",
+    "orchestration",
+    "netflix-conductor",
+    "model-context-protocol"
+  ],
+  "author": "",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "axios": "^1.7.9"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "typescript": "^5.7.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
