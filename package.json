@@ -7,6 +7,13 @@
   "bin": {
     "conductor-mcp": "build/index.js"
   },
+  "files": [
+    "build",
+    "README.md",
+    "QUICKSTART.md",
+    "EXAMPLES.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc",
     "prepare": "npm run build",
@@ -19,8 +26,20 @@
     "workflow",
     "orchestration",
     "netflix-conductor",
-    "model-context-protocol"
+    "model-context-protocol",
+    "ai",
+    "claude",
+    "workflow-engine",
+    "microservices"
   ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/opensensor/conductor-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/opensensor/conductor-mcp/issues"
+  },
+  "homepage": "https://github.com/opensensor/conductor-mcp#readme",
   "author": "",
   "license": "Apache-2.0",
   "dependencies": {
