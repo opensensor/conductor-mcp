@@ -2,8 +2,7 @@
 node_modules/
 package-lock.json
 
-# Build output
-build/
+# Build artifacts (keep build/ for npm package)
 dist/
 *.tsbuildinfo
 
